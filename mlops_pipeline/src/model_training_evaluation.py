@@ -51,20 +51,30 @@ def build_model(preprocessor, estimator, X_train, y_train, sample_weight=None):
     return modelo
 
 
+def predecir_impago_oof(preprocessor, estimator, X_train, y_train, sample_weight=None):
+    """Probabilidad de impago out-of-fold (validación cruzada) para cada fila de train."""
+    validacion = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEMILLA)
+    proba = cross_val_predict(crear_pipeline(preprocessor, estimator), X_train, y_train, cv=validacion,
+                              method="predict_proba", params=parametros_fit(sample_weight))
+    # predict_proba ordena las columnas por clase ascendente
+    return proba[:, list(np.unique(y_train)).index(CLASE_IMPAGO)]
+
+
+def umbral_optimo(y_true, proba_impago):
+    """Umbral de probabilidad de impago que maximiza el F1 de impago."""
+    precision, recall, umbrales = precision_recall_curve(np.asarray(y_true) == CLASE_IMPAGO, proba_impago)
+    f1 = 2 * precision * recall / np.maximum(precision + recall, 1e-12)
+    return umbrales[np.argmax(f1[:-1])]
+
+
 def optimizar_umbral(preprocessor, estimator, X_train, y_train, sample_weight=None):
     """Umbral de probabilidad de impago que maximiza el F1 de impago.
 
     Usa predicciones out-of-fold de validación cruzada sobre train, así que el
     conjunto de test no interviene en la elección.
     """
-    validacion = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=SEMILLA)
-    proba = cross_val_predict(crear_pipeline(preprocessor, estimator), X_train, y_train, cv=validacion,
-                              method="predict_proba", params=parametros_fit(sample_weight))
-    # predict_proba ordena las columnas por clase ascendente
-    proba_impago = proba[:, list(np.unique(y_train)).index(CLASE_IMPAGO)]
-    precision, recall, umbrales = precision_recall_curve(y_train == CLASE_IMPAGO, proba_impago)
-    f1 = 2 * precision * recall / np.maximum(precision + recall, 1e-12)
-    return umbrales[np.argmax(f1[:-1])]
+    proba_impago = predecir_impago_oof(preprocessor, estimator, X_train, y_train, sample_weight)
+    return umbral_optimo(y_train, proba_impago)
 
 
 def summarize_classification(y_true, y_pred, y_proba=None, pos_label=CLASE_PAGO):
