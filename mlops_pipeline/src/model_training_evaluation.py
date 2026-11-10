@@ -5,8 +5,14 @@ de modo que se ajusta solo con el conjunto de entrenamiento.
 
 Cada modelo se evalúa con el umbral por defecto (0.5) y con un umbral de
 probabilidad de impago ajustado por validación cruzada solo sobre train.
+
+El mejor modelo se guarda en `RUTA_MODELO` para que lo use `model_deploy.py`.
 """
 
+from datetime import datetime
+from pathlib import Path
+
+import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -21,7 +27,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_sample_weight
 from xgboost import XGBClassifier
 
-from ft_engineering import SEMILLA, TARGET, construir_preprocesador, generar_conjuntos
+from ft_engineering import (COLUMNAS_NOMINALES, COLUMNAS_NUMERICAS, COLUMNAS_ORDINALES, SEMILLA, TARGET,
+                            construir_preprocesador, generar_conjuntos)
 
 CLASE_IMPAGO = 0
 CLASE_PAGO = 1
@@ -30,6 +37,9 @@ CLASE_PAGO = 1
 LIMITE_DESBALANCE = 0.2
 UMBRAL_POR_DEFECTO = 0.5
 N_FOLDS = 5
+
+VERSION_MODELO = "1.1.2"
+RUTA_MODELO = Path(__file__).resolve().parent / "modelo_riesgo_crediticio.joblib"
 
 
 def crear_pipeline(preprocessor, estimator):
@@ -95,6 +105,23 @@ def summarize_classification(y_true, y_pred, y_proba=None, pos_label=CLASE_PAGO)
         resumen["roc_auc"] = roc_auc_score(es_positiva, y_proba)
         resumen["pr_auc"] = average_precision_score(es_positiva, y_proba)
     return resumen
+
+
+def guardar_modelo(modelo, nombre, umbral_impago, metricas_test, ruta=RUTA_MODELO):
+    """Guarda el Pipeline entrenado junto con su umbral y metadatos en un .joblib."""
+    artefacto = {
+        "modelo": modelo,
+        "nombre": nombre,
+        "version": VERSION_MODELO,
+        "fecha_entrenamiento": datetime.now().isoformat(timespec="seconds"),
+        "umbral_impago": float(umbral_impago),
+        "clase_impago": CLASE_IMPAGO,
+        "clase_pago": CLASE_PAGO,
+        "columnas_entrada": COLUMNAS_NUMERICAS + COLUMNAS_NOMINALES + COLUMNAS_ORDINALES,
+        "metricas_test": {metrica: float(valor) for metrica, valor in metricas_test.items()},
+    }
+    joblib.dump(artefacto, ruta)
+    return ruta
 
 
 def definir_modelos(y_train, balancear):
@@ -189,11 +216,12 @@ if __name__ == "__main__":
 
     preprocesador = construir_preprocesador()
     resultados = {}
-    proba_impago_por_modelo, umbral_por_modelo = {}, {}
+    modelos_entrenados, proba_impago_por_modelo, umbral_por_modelo = {}, {}, {}
     for nombre, (estimador, sample_weight) in definir_modelos(y_train, balancear).items():
         modelo = build_model(preprocesador, estimador, X_train, y_train, sample_weight)
         umbral_ajustado = optimizar_umbral(preprocesador, estimador, X_train, y_train, sample_weight)
         print(f"Entrenado: {nombre} (umbral ajustado por CV: {umbral_ajustado:.3f})")
+        modelos_entrenados[nombre] = modelo
 
         indice_impago = list(modelo.classes_).index(CLASE_IMPAGO)
         proba_impago = modelo.predict_proba(X_test)[:, indice_impago]
@@ -215,9 +243,13 @@ if __name__ == "__main__":
     print(tabla.round(3).to_string())
 
     tabla_ajustado = tabla.xs("ajustado", level="umbral")
-    mejor = tabla_ajustado.iloc[0]
-    print(f"\nMejor modelo: {tabla_ajustado.index[0]} con umbral de impago {mejor['umbral_impago']:.3f} "
+    nombre_mejor, mejor = tabla_ajustado.index[0], tabla_ajustado.iloc[0]
+    print(f"\nMejor modelo: {nombre_mejor} con umbral de impago {mejor['umbral_impago']:.3f} "
           f"(mayor F1 en test con umbral ajustado: F1={mejor['f1']:.3f}, ROC-AUC={mejor['roc_auc']:.3f})")
+
+    ruta = guardar_modelo(modelos_entrenados[nombre_mejor], nombre_mejor, mejor["umbral_impago"],
+                          mejor.drop("umbral_impago"))
+    print(f"Modelo guardado en: {ruta}")
 
     graficar_comparacion(tabla_ajustado, proba_impago_por_modelo, umbral_por_modelo, y_test)
     plt.show()
