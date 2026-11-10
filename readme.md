@@ -1,6 +1,6 @@
 # Despliegue de proyecto: modelo de riesgo crediticio
 
-Modelo predictivo que estima si un cliente **pagará a tiempo su crédito** (`Pago_atiempo`), junto con el pipeline completo de datos, entrenamiento, evaluación y monitoreo de data drift.
+Modelo predictivo que estima si un cliente **pagará a tiempo su crédito** (`Pago_atiempo`), junto con el pipeline completo de datos, entrenamiento, evaluación, monitoreo de data drift y despliegue como API.
 
 ## Caso de negocio
 
@@ -30,17 +30,21 @@ La estructura de carpetas es fija porque el despliegue a producción se valida a
 
 ```
 credit-risk-mlops/
+├── mlops_pipeline/src/
+│   ├── cargar_datos.ipynb
+│   ├── comprension_eda.ipynb
+│   ├── ft_engineering.py
+│   ├── model_training_evaluation.py
+│   ├── model_monitoring.py
+│   ├── app_monitoreo.py
+│   ├── model_deploy.py
+│   └── modelo_riesgo_crediticio.joblib
+├── .dockerignore
+├── .gitignore
 ├── Base_de_datos.csv
+├── Dockerfile
 ├── readme.md
-├── requirements.txt
-└── mlops_pipeline/src/
-    ├── cargar_datos.ipynb             
-    ├── comprension_eda.ipynb          
-    ├── ft_engineering.py              
-    ├── model_training_evaluation.py   
-    ├── model_monitoring.py            
-    ├── app_monitoreo.py               
-    └── model_deploy.py                
+└── requirements.txt
 ```
 
 ## Instalación y ejecución
@@ -66,6 +70,7 @@ python mlops_pipeline/src/ft_engineering.py               # verifica el preproce
 python mlops_pipeline/src/model_training_evaluation.py    # compara modelos y muestra gráficos
 python mlops_pipeline/src/model_monitoring.py             # reporte de drift en la terminal
 streamlit run mlops_pipeline/src/app_monitoreo.py         # dashboard en http://localhost:8501
+python mlops_pipeline/src/model_deploy.py                 # API en http://localhost:8000/docs
 ```
 
 La primera vez que se usa Streamlit, pide un correo opcional: basta con dejarlo vacío y presionar Enter.
@@ -87,7 +92,7 @@ Hallazgos principales:
 
 ### Avance 2: ingeniería de características y modelamiento
 
-`**ft_engineering.py**`
+**`ft_engineering.py`**
 
 1. **Limpieza:** los valores fuera de rango plausible pasan a faltante. Los rangos son edad 18–100, `puntaje_datacredito` 150–950, salario y otros préstamos ≥ 0, y plazo 1–60 meses. Las categorías inválidas de `tendencia_ingresos` también pasan a faltante, y los códigos raros de `tipo_credito` (7 y 68) se agrupan en "Otros".
 2. **ColumnTransformer** con tres grupos:
@@ -97,7 +102,7 @@ Hallazgos principales:
 3. Se excluyen `puntaje` (fuga) y `fecha_prestamo`.
 4. `generar_conjuntos()` devuelve train y test (80/20) con split estratificado y semilla fija. El preprocesador se ajusta solo con train, dentro del Pipeline de cada modelo.
 
-`**model_training_evaluation.py**`
+**`model_training_evaluation.py`**
 
 - Compara Regresión Logística, Random Forest, Gradient Boosting y XGBoost.
 - Compensa el desbalance con `class_weight="balanced"`, `sample_weight` (Gradient Boosting) y `scale_pos_weight` (XGBoost).
@@ -118,7 +123,7 @@ Resultados en test con el umbral ajustado (clase positiva: `Pago_atiempo` = 1):
 
 ### Avance 3: monitoreo y data drift
 
-`**model_monitoring.py**` arma la tabla de datos con los pronósticos del modelo y la muestrea por periodos según `fecha_prestamo`:
+**`model_monitoring.py`** arma la tabla de datos con los pronósticos del modelo y la muestrea por periodos según `fecha_prestamo`:
 
 - **Referencia (histórico):** préstamos hasta marzo de 2025 (5,528 registros). Con ellos se entrena XGBoost y se ajusta el umbral. Sus pronósticos son out-of-fold.
 - **Producción:** cada mes desde abril de 2025 se puntúa con ese modelo. Los meses con menos de 100 préstamos se agrupan (feb–abr 2026).
@@ -140,7 +145,7 @@ Las pruebas KS y chi-cuadrado llegan como máximo a amarillo, porque con muestra
 - **Advertencia (revisar variables):** alguna variable en rojo, o un salto de PSI mayor a 0.10 respecto del periodo anterior.
 - **Informativa:** PSI en aumento durante 3 periodos seguidos.
 
-`**app_monitoreo.py**` (Streamlit) tiene cinco pestañas:
+**`app_monitoreo.py`** (Streamlit) tiene cinco pestañas:
 
 1. **Resumen y alertas:** indicadores del periodo, mensajes automáticos y recomendaciones.
 2. **Métricas de drift:** tabla con semáforo y barras de riesgo por variable.
@@ -150,9 +155,9 @@ Las pruebas KS y chi-cuadrado llegan como máximo a amarillo, porque con muestra
 
 #### Hallazgos del monitoreo
 
-- `**promedio_ingresos_datacredito**` tiene el drift más fuerte y creciente: su PSI pasa de 0.25 en abril de 2025 a 1.10 en 2026. Los ingresos se concentran en valores ligados al salario mínimo, que suben con el tiempo, así que el modelo ve ingresos "más altos" que no lo son en términos reales.
-- `**plazo_meses**` tuvo un cambio temporal entre mayo y agosto de 2025 (PSI de 0.39 a 0.55) que después se normalizó. Apunta a un cambio pasajero en la política de plazos.
-- `**total_otros_prestamos**`, `**capital_prestado**` y `**cuota_pactada**` pasan a rojo desde mediados o finales de 2025.
+- **`promedio_ingresos_datacredito`** tiene el drift más fuerte y creciente: su PSI pasa de 0.25 en abril de 2025 a 1.10 en 2026. Los ingresos se concentran en valores ligados al salario mínimo, que suben con el tiempo, así que el modelo ve ingresos "más altos" que no lo son en términos reales.
+- **`plazo_meses`** tuvo un cambio temporal entre mayo y agosto de 2025 (PSI de 0.39 a 0.55) que después se normalizó. Apunta a un cambio pasajero en la política de plazos.
+- **`total_otros_prestamos`**, **`capital_prestado`** y **`cuota_pactada`** pasan a rojo desde mediados o finales de 2025.
 - **El modelo sobreestima el impago:** la tasa predicha sube de 10 % a 13–17 %, mientras la real baja de 5 % a 2–4 %.
 - **El ROC-AUC se mantiene en 0.67–0.74** en los meses con suficientes impagos, con una caída a 0.52 en agosto de 2025. En los meses con menos de 10 impagos, el AUC no es confiable.
 
@@ -164,6 +169,75 @@ Las pruebas KS y chi-cuadrado llegan como máximo a amarillo, porque con muestra
 4. **Validar con un split temporal** en lugar de aleatorio, ya que la población cambia con el tiempo.
 5. **Confirmar con el negocio** cómo se calcula `puntaje` antes de considerarlo en futuras versiones.
 
+### Avance 4: despliegue del modelo como API
+
+**Modelo entrenado:** al final de `model_training_evaluation.py` se guarda el mejor modelo en `mlops_pipeline/src/modelo_riesgo_crediticio.joblib`. El archivo contiene:
+
+- el Pipeline completo (limpieza + preprocesamiento + XGBoost), entrenado solo con train;
+- el umbral de impago (0.677);
+- metadatos: versión, fecha, columnas de entrada y métricas en test.
+
+**`model_deploy.py`** (FastAPI + Uvicorn) carga el `.joblib` al arrancar y expone:
+
+| Endpoint | Descripción |
+|---|---|
+| `GET /` | Información del modelo: versión, umbral, métricas y columnas esperadas |
+| `GET /health` | Estado del servicio |
+| `POST /predict` | Predicción por lotes en JSON o CSV |
+| `GET /docs` | Documentación interactiva para probar la API desde el navegador |
+
+`/predict` acepta tres formatos:
+
+```bash
+# JSON: {"registros": [{...}, {...}]}
+curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d @lote.json
+
+# CSV como archivo (campo "archivo")
+curl -X POST http://localhost:8000/predict -F "archivo=@lote.csv"
+
+# CSV en el cuerpo
+curl -X POST http://localhost:8000/predict -H "Content-Type: text/csv" --data-binary @lote.csv
+```
+
+Cada registro debe traer las 20 variables de entrada del modelo:
+
+- Las variables pueden venir en `null` o vacías, porque el modelo imputa los faltantes.
+- Las columnas adicionales (`puntaje`, `fecha_prestamo`, `Pago_atiempo`) se ignoran, así que se puede enviar directamente un extracto de `Base_de_datos.csv`.
+
+Errores que devuelve la API:
+
+| Código | Causa |
+|---|---|
+| 422 | Falta una variable o un valor no es válido. El mensaje indica la fila y el campo. |
+| 400 | El JSON o el CSV no se pueden leer. |
+| 415 | El formato del contenido no está soportado. |
+
+La respuesta trae, por cada registro, la probabilidad de impago, la predicción y la decisión:
+
+```json
+{
+  "modelo": "XGBoost", "version": "1.1.2", "umbral_impago": 0.677, "n_registros": 2,
+  "predicciones": [
+    {"indice": 0, "proba_impago": 0.5929, "prediccion": 1, "decision": "paga"},
+    {"indice": 1, "proba_impago": 0.7460, "prediccion": 0, "decision": "no paga"}
+  ]
+}
+```
+
+**Imagen Docker:**
+
+- **`Dockerfile`:**
+  - parte de `python:3.13-slim` e instala `libgomp1`, la librería OpenMP que XGBoost necesita en Linux;
+  - instala `requirements.txt` y copia el código de la API y el modelo;
+  - corre con un usuario sin privilegios, levanta Uvicorn en el puerto 8000 y tiene un `HEALTHCHECK` contra `/health`.
+- **`.dockerignore`:** deja fuera el entorno virtual, Git, los datos, los notebooks y el código de monitoreo.
+
+```bash
+docker build -t riesgo-crediticio-api:1.1.2 .
+docker run -d -p 8000:8000 --name riesgo-api riesgo-crediticio-api:1.1.2
+curl http://localhost:8000/health
+```
+
 ## Versiones
 
 | Versión | Contenido |
@@ -172,3 +246,4 @@ Las pruebas KS y chi-cuadrado llegan como máximo a amarillo, porque con muestra
 | v1.0.1 | Avance 1: carga de datos y análisis exploratorio |
 | v1.1.0 | Avance 2: ingeniería de características y modelamiento |
 | v1.1.1 | Avance 3: monitoreo de data drift, app en Streamlit y documentación |
+| v1.1.2 | Avance 4: API de predicción con FastAPI e imagen Docker |

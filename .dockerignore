@@ -1,0 +1,22 @@
+# Entorno y control de versiones
+.venv/
+.git/
+.gitignore
+**/__pycache__/
+**/*.pyc
+.DS_Store
+
+# Datos y notebooks: la imagen solo necesita el modelo entrenado
+Base_de_datos.csv
+*.xlsx
+**/*.ipynb
+**/.ipynb_checkpoints/
+
+# Código que no forma parte de la API
+mlops_pipeline/src/model_monitoring.py
+mlops_pipeline/src/app_monitoreo.py
+
+# Documentación y configuración de Docker
+readme.md
+Dockerfile
+.dockerignore
